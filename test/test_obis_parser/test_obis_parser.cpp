@@ -165,6 +165,15 @@ void test_parse_whitespace_and_newlines(void)
     TEST_ASSERT_DOUBLE_WITHIN(0.001, 5.123, energy->valuedouble);
 }
 
+void test_parse_empty_string(void)
+{
+    testMeter->simulateData("");
+
+    cJSON *json = testMeter->getJsonData();
+    TEST_ASSERT_NOT_NULL(json);
+    TEST_ASSERT_EQUAL_INT(0, cJSON_GetArraySize(json));
+}
+
 void test_parse_malformed_lines_graceful(void)
 {
     testMeter->simulateData("");
@@ -203,6 +212,7 @@ int main(int argc, char **argv)
     RUN_TEST(test_parse_error_code_and_operating_hours);
     RUN_TEST(test_parse_multiple_obis_in_single_line);
     RUN_TEST(test_parse_whitespace_and_newlines);
+    RUN_TEST(test_parse_empty_string);
     RUN_TEST(test_parse_malformed_lines_graceful);
     RUN_TEST(test_clear_json_data);
     return UNITY_END();

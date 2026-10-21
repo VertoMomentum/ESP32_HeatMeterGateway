@@ -1,0 +1,156 @@
+name: AI Issue Solver (Self-Hosted ESP32 Sandbox)
+
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: 'Issue-Nummer, die bearbeitet werden soll'
+        required: true
+        type: number
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  solve-issue:
+    name: Solve Issue in ESP32 Sandbox
+    # Startet bei manuellem Trigger oder wenn das Label 'ai-solve' vergeben wird
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issues' && github.event.label.name == 'ai-solve')
+    runs-on: self-hosted
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Issue-Details abrufen & Branch vorbereiten
+        id: issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_ISSUE_NUMBER: ${{ github.event.issue.number }}
+          INPUT_ISSUE_NUMBER: ${{ inputs.issue_number }}
+        run: |
+          ISSUE_NUM="${EVENT_ISSUE_NUMBER:-$INPUT_ISSUE_NUMBER}"
+          echo "issue_number=${ISSUE_NUM}" >> "$GITHUB_OUTPUT"
+
+          BRANCH_NAME="fix/issue-${ISSUE_NUM}"
+          echo "branch_name=${BRANCH_NAME}" >> "$GITHUB_OUTPUT"
+
+          ISSUE_TITLE=$(gh issue view "$ISSUE_NUM" --json title -q .title)
+          ISSUE_BODY=$(gh issue view "$ISSUE_NUM" --json body -q .body)
+
+          {
+            echo "issue_title<<EOF_TITLE"
+            echo "$ISSUE_TITLE"
+            echo "EOF_TITLE"
+            echo "issue_body<<EOF_BODY"
+            echo "$ISSUE_BODY"
+            echo "EOF_BODY"
+          } >> "$GITHUB_OUTPUT"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH_NAME"
+
+          gh issue comment "$ISSUE_NUM" --body "🤖 **AI Issue Solver gestartet!**
+          Ich bearbeite dieses Issue jetzt in der isolierten \`antigravity-esp32-sandbox\` auf dem Self-Hosted Runner (\`$RUNNER_NAME\`) im Branch \`${BRANCH_NAME}\`."
+
+      - name: Issue im Docker-Container lösen & testen
+        env:
+          ISSUE_NUM: ${{ steps.issue.outputs.issue_number }}
+          ISSUE_TITLE: ${{ steps.issue.outputs.issue_title }}
+          ISSUE_BODY: ${{ steps.issue.outputs.issue_body }}
+          HOST_UID: "1000"
+          HOST_GID: "1000"
+        run: |
+          HOST_UID=$(id -u)
+          HOST_GID=$(id -g)
+          export HOST_UID HOST_GID
+
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -v agent-sandbox_pio-cache:/root/.platformio \
+            -v /home/dominik/.gemini:/root/.gemini \
+            -e ISSUE_NUM \
+            -e ISSUE_TITLE \
+            -e ISSUE_BODY \
+            -e HOST_UID \
+            -e HOST_GID \
+            -w /workspace \
+            antigravity-esp32-sandbox:latest \
+            bash -c '
+              set -e
+              trap "chown -R ${HOST_UID}:${HOST_GID} /workspace" EXIT
+
+              PROMPT="Du bist ein autonomer Embedded-C++-Entwickler für das Projekt ESP32_HeatMeterGateway.
+              Bitte lies zuerst .agents/AGENTS.md und CODING_STANDARDS.md und halte dich strikt daran.
+
+              Bearbeite folgendes GitHub Issue #${ISSUE_NUM}:
+              Titel: ${ISSUE_TITLE}
+
+              Beschreibung:
+              ${ISSUE_BODY}
+
+              Aufgaben:
+              1. Analysiere den relevanten Code im Repository (/workspace).
+              2. Implementiere die Lösung sauber und ergänze oder aktualisiere passende Unit-Tests unter test/.
+              3. Führe die Unit-Tests aus mit: pio test -e native -v
+              4. Prüfe den Firmware-Build mit: pio run -e esp32-c3 und pio run -e esp32-s3
+              5. Behebe eventuelle Compiler- oder Testfehler, bis Tests und Builds fehlerfrei durchlaufen.
+              6. Führe KEIN git commit oder git push aus (das übernimmt der GitHub Workflow im Anschluss)."
+
+              echo "=== Starte Antigravity Agent ==="
+              agy --dangerously-skip-permissions --print "$PROMPT"
+
+              echo "=== Abschließende Verifikation: Native Unit-Tests ==="
+              pio test -e native -v
+
+              echo "=== Abschließende Verifikation: Firmware-Build (esp32-c3 & esp32-s3) ==="
+              pio run -e esp32-c3
+              pio run -e esp32-s3
+            '
+
+      - name: Änderungen committen, Branch pushen & Pull Request erstellen
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUM: ${{ steps.issue.outputs.issue_number }}
+          ISSUE_TITLE: ${{ steps.issue.outputs.issue_title }}
+          BRANCH_NAME: ${{ steps.issue.outputs.branch_name }}
+        run: |
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "Keine Dateiänderungen festgestellt."
+            gh issue comment "$ISSUE_NUM" --body "⚠️ Der Durchlauf ist abgeschlossen, es wurden jedoch keine Code-Änderungen vorgenommen."
+            exit 1
+          fi
+
+          git add -A
+          git commit -m "fix: resolve issue #${ISSUE_NUM} (${ISSUE_TITLE})"
+          git push -u origin "$BRANCH_NAME" --force
+
+          PR_URL=$(gh pr create \
+            --title "fix: ${ISSUE_TITLE} (#${ISSUE_NUM})" \
+            --body "$(cat <<EOF
+          ## Automatische Lösung für Issue #${ISSUE_NUM}
+
+          Closes #${ISSUE_NUM}
+
+          ### Durchgeführte Schritte & Verifikation
+          - ✅ Code-Änderungen in isolierter Docker-Sandbox (\`antigravity-esp32-sandbox:latest\`) erstellt
+          - ✅ Native Unit-Tests (\`pio test -e native -v\`) erfolgreich ausgeführt
+          - ✅ Firmware-Builds für \`esp32-c3\` und \`esp32-s3\` erfolgreich kompiliert
+          EOF
+          )" \
+            --assignee "nickelbert" \
+            --head "$BRANCH_NAME" \
+            --base "main")
+
+          gh issue comment "$ISSUE_NUM" --body "✅ **Pull Request erstellt:** ${PR_URL} (zugewiesen an @nickelbert)."

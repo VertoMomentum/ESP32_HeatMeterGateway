@@ -136,9 +136,7 @@ jobs:
           git commit -m "fix: resolve issue #${ISSUE_NUM} (${ISSUE_TITLE})"
           git push -u origin "$BRANCH_NAME" --force
 
-          PR_URL=$(gh pr create \
-            --title "fix: ${ISSUE_TITLE} (#${ISSUE_NUM})" \
-            --body "$(cat <<EOF
+          PR_BODY=$(cat <<EOF
           ## Automatische Lösung für Issue #${ISSUE_NUM}
 
           Closes #${ISSUE_NUM}
@@ -148,7 +146,18 @@ jobs:
           - ✅ Native Unit-Tests (\`pio test -e native -v\`) erfolgreich ausgeführt
           - ✅ Firmware-Builds für \`esp32-c3\` und \`esp32-s3\` erfolgreich kompiliert
           EOF
-          )" \
+          )
+
+          # Erstelle PR (nutzt GITHUB_TOKEN oder fällt auf den lokalen gh-Login des Runners zurück,
+          # falls PR-Erstellung durch Actions in den Organisations-Einstellungen deaktiviert ist)
+          PR_URL=$(gh pr create \
+            --title "fix: ${ISSUE_TITLE} (#${ISSUE_NUM})" \
+            --body "$PR_BODY" \
+            --assignee "nickelbert" \
+            --head "$BRANCH_NAME" \
+            --base "main" || env -u GH_TOKEN gh pr create \
+            --title "fix: ${ISSUE_TITLE} (#${ISSUE_NUM})" \
+            --body "$PR_BODY" \
             --assignee "nickelbert" \
             --head "$BRANCH_NAME" \
             --base "main")

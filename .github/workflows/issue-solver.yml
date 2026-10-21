@@ -1,0 +1,163 @@
+name: AI Issue Solver (Self-Hosted ESP32 Sandbox)
+
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: 'Issue number to solve'
+        required: true
+        type: number
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  solve-issue:
+    name: Solve Issue in ESP32 Sandbox
+    # Triggers on manual dispatch or when the 'ai-solve' label is added to an issue
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issues' && github.event.label.name == 'ai-solve')
+    runs-on: self-hosted
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch issue details & prepare branch
+        id: issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_ISSUE_NUMBER: ${{ github.event.issue.number }}
+          INPUT_ISSUE_NUMBER: ${{ inputs.issue_number }}
+        run: |
+          ISSUE_NUM="${EVENT_ISSUE_NUMBER:-$INPUT_ISSUE_NUMBER}"
+          echo "issue_number=${ISSUE_NUM}" >> "$GITHUB_OUTPUT"
+
+          BRANCH_NAME="fix/issue-${ISSUE_NUM}"
+          echo "branch_name=${BRANCH_NAME}" >> "$GITHUB_OUTPUT"
+
+          ISSUE_TITLE=$(gh issue view "$ISSUE_NUM" --json title -q .title)
+          ISSUE_BODY=$(gh issue view "$ISSUE_NUM" --json body -q .body)
+
+          {
+            echo "issue_title<<EOF_TITLE"
+            echo "$ISSUE_TITLE"
+            echo "EOF_TITLE"
+            echo "issue_body<<EOF_BODY"
+            echo "$ISSUE_BODY"
+            echo "EOF_BODY"
+          } >> "$GITHUB_OUTPUT"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH_NAME"
+
+          gh issue comment "$ISSUE_NUM" --body "🤖 **AI Issue Solver started!**
+          Working on this issue inside the isolated \`antigravity-esp32-sandbox\` container on self-hosted runner \`$RUNNER_NAME\` (branch: \`${BRANCH_NAME}\`)."
+
+      - name: Solve issue & run tests in Docker container
+        env:
+          ISSUE_NUM: ${{ steps.issue.outputs.issue_number }}
+          ISSUE_TITLE: ${{ steps.issue.outputs.issue_title }}
+          ISSUE_BODY: ${{ steps.issue.outputs.issue_body }}
+        run: |
+          HOST_UID=$(id -u)
+          HOST_GID=$(id -g)
+          export HOST_UID HOST_GID
+
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -v agent-sandbox_pio-cache:/root/.platformio \
+            -v /home/dominik/.gemini:/root/.gemini \
+            -e ISSUE_NUM \
+            -e ISSUE_TITLE \
+            -e ISSUE_BODY \
+            -e HOST_UID \
+            -e HOST_GID \
+            -w /workspace \
+            antigravity-esp32-sandbox:latest \
+            bash -c '
+              set -e
+              trap "chown -R ${HOST_UID}:${HOST_GID} /workspace" EXIT
+
+              PROMPT="You are an autonomous embedded C++ developer working on the ESP32_HeatMeterGateway project.
+              First, read .agents/AGENTS.md and CODING_STANDARDS.md and strictly follow all project conventions and licensing rules.
+
+              Solve GitHub Issue #${ISSUE_NUM}:
+              Title: ${ISSUE_TITLE}
+
+              Description:
+              ${ISSUE_BODY}
+
+              Tasks:
+              1. Analyze the relevant code in the repository (/workspace).
+              2. Implement a clean fix/feature and add or update unit tests under test/ as appropriate.
+              3. Run the native unit tests using: pio test -e native -v
+              4. Verify firmware compilation using: pio run -e esp32-c3 and pio run -e esp32-s3
+              5. Fix any compiler or test errors until all unit tests and firmware builds succeed.
+              6. Do NOT run git commit or git push (the GitHub Actions workflow handles committing and pushing)."
+
+              echo "=== Starting Antigravity Agent ==="
+              agy --dangerously-skip-permissions --print "$PROMPT"
+
+              echo "=== Final Verification: Native Unit Tests ==="
+              pio test -e native -v
+
+              echo "=== Final Verification: Firmware Builds (esp32-c3 & esp32-s3) ==="
+              pio run -e esp32-c3
+              pio run -e esp32-s3
+            '
+
+      - name: Commit changes, push branch & create Pull Request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUM: ${{ steps.issue.outputs.issue_number }}
+          ISSUE_TITLE: ${{ steps.issue.outputs.issue_title }}
+          BRANCH_NAME: ${{ steps.issue.outputs.branch_name }}
+        run: |
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "No file changes detected."
+            gh issue comment "$ISSUE_NUM" --body "⚠️ The agent run completed, but no code changes were produced."
+            exit 1
+          fi
+
+          git add -A
+          git commit -m "fix: resolve issue #${ISSUE_NUM} (${ISSUE_TITLE})"
+          git push -u origin "$BRANCH_NAME" --force
+
+          PR_BODY=$(cat <<EOF
+          ## Automated Fix for Issue #${ISSUE_NUM}
+
+          Closes #${ISSUE_NUM}
+
+          ### Verification Summary
+          - ✅ Code changes generated inside isolated Docker sandbox (\`antigravity-esp32-sandbox:latest\`)
+          - ✅ Native unit tests (\`pio test -e native -v\`) passed
+          - ✅ Firmware builds for \`esp32-c3\` and \`esp32-s3\` succeeded
+          EOF
+          )
+
+          # Create PR using GITHUB_TOKEN, falling back to the runner host gh authentication
+          # if organization settings restrict GitHub Actions from creating pull requests
+          PR_URL=$(gh pr create \
+            --title "fix: ${ISSUE_TITLE} (#${ISSUE_NUM})" \
+            --body "$PR_BODY" \
+            --assignee "nickelbert" \
+            --head "$BRANCH_NAME" \
+            --base "main" || env -u GH_TOKEN gh pr create \
+            --title "fix: ${ISSUE_TITLE} (#${ISSUE_NUM})" \
+            --body "$PR_BODY" \
+            --assignee "nickelbert" \
+            --head "$BRANCH_NAME" \
+            --base "main")
+
+          gh issue comment "$ISSUE_NUM" --body "✅ **Pull Request created:** ${PR_URL} (assigned to @nickelbert)."

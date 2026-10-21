@@ -18,10 +18,13 @@ permissions:
 jobs:
   solve-issue:
     name: Solve Issue in ESP32 Sandbox
-    # Triggers on manual dispatch or when the 'ai-solve' label is added to an issue
+    # Only run when triggered by 'nickelbert' via manual dispatch or adding the 'ai-solve' label
     if: >
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'issues' && github.event.label.name == 'ai-solve')
+      github.actor == 'nickelbert' &&
+      (
+        github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'issues' && github.event.label.name == 'ai-solve')
+      )
     runs-on: self-hosted
     timeout-minutes: 45
 

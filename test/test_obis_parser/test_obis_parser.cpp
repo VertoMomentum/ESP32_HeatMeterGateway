@@ -198,6 +198,103 @@ void test_clear_json_data(void)
     TEST_ASSERT_EQUAL_INT(0, cJSON_GetArraySize(testMeter->getJsonData()));
 }
 
+void test_parse_string_and_negative_values(void)
+{
+    testMeter->simulateData("6.36(2025-01-01)");
+    testMeter->simulateData("9.4(-05.5&012.3*C)");
+    testMeter->simulateData("9.20(12.34.56)");
+
+    cJSON *json = testMeter->getJsonData();
+    TEST_ASSERT_NOT_NULL(json);
+
+    cJSON *billingDate = cJSON_GetObjectItem(json, "6.36");
+    TEST_ASSERT_NOT_NULL(billingDate);
+    TEST_ASSERT_TRUE(cJSON_IsString(billingDate));
+    TEST_ASSERT_EQUAL_STRING("2025-01-01", billingDate->valuestring);
+
+    cJSON *negTemp = cJSON_GetObjectItem(json, "9.4.0");
+    TEST_ASSERT_NOT_NULL(negTemp);
+    TEST_ASSERT_DOUBLE_WITHIN(0.01, -5.5, negTemp->valuedouble);
+
+    cJSON *multiDot = cJSON_GetObjectItem(json, "9.20");
+    TEST_ASSERT_NOT_NULL(multiDot);
+    TEST_ASSERT_TRUE(cJSON_IsString(multiDot));
+    TEST_ASSERT_EQUAL_STRING("12.34.56", multiDot->valuestring);
+}
+
+static void advanceMockTimeOnDelay(void)
+{
+    g_mockTimeUs += 3000000LL; // Advance 3 seconds per task delay
+}
+
+void test_meter_state_machine_readout_and_timeout(void)
+{
+    g_useMockTime = true;
+    g_mockTimeUs = 1000000LL;
+    configManager.m_dummyMode = false;
+    configManager.m_readIntervalSeconds = 60;
+
+    testMeter->setup();
+    testMeter->forceReading();
+    triggerMeterSimulation("6.8(0002.500*MWh)");
+
+    // 1. Test full readout sequence: Ident line + OBIS data line + 3s silence -> publish
+    setMockUartRxData("/LUGCUH50\r\n6.26(0010.00*m3)\r\n");
+    g_onTaskDelayCallback = &advanceMockTimeOnDelay;
+    g_mockTaskDelayRemaining = 2;
+
+    try
+    {
+        if (g_lastCreatedTaskFn != nullptr)
+        {
+            g_lastCreatedTaskFn(g_lastCreatedTaskParam);
+        }
+    }
+    catch (const MockTaskExitException &)
+    {
+    }
+
+    TEST_ASSERT_EQUAL_INT(1, g_mqttPublishTriggers.size());
+    cJSON *vol = cJSON_GetObjectItem(testMeter->getJsonData(), "6.26");
+    TEST_ASSERT_NOT_NULL(vol);
+    TEST_ASSERT_DOUBLE_WITHIN(0.01, 10.0, vol->valuedouble);
+
+    // 2. Test identification timeout and retry path
+    setMockUartRxData("");
+    testMeter->forceReading();
+    g_mockTaskDelayRemaining = 3;
+
+    try
+    {
+        if (g_lastCreatedTaskFn != nullptr)
+        {
+            g_lastCreatedTaskFn(g_lastCreatedTaskParam);
+        }
+    }
+    catch (const MockTaskExitException &)
+    {
+    }
+
+    // 3. Test dummy mode idle branch
+    configManager.m_dummyMode = true;
+    g_mockTaskDelayRemaining = 0;
+    try
+    {
+        if (g_lastCreatedTaskFn != nullptr)
+        {
+            g_lastCreatedTaskFn(g_lastCreatedTaskParam);
+        }
+    }
+    catch (const MockTaskExitException &)
+    {
+    }
+
+    g_onTaskDelayCallback = nullptr;
+    g_mockTaskDelayRemaining = -1;
+    g_useMockTime = false;
+    configManager.m_dummyMode = false;
+}
+
 int main(int argc, char **argv)
 {
     (void)argc;
@@ -215,5 +312,7 @@ int main(int argc, char **argv)
     RUN_TEST(test_parse_empty_string);
     RUN_TEST(test_parse_malformed_lines_graceful);
     RUN_TEST(test_clear_json_data);
+    RUN_TEST(test_parse_string_and_negative_values);
+    RUN_TEST(test_meter_state_machine_readout_and_timeout);
     return UNITY_END();
 }

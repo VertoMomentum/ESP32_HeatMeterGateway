@@ -242,7 +242,81 @@ void test_incoming_read_command_handling(void)
     dataEvent.data_len = sizeof(dataBuf) - 1;
 
     MqttHandler::mqttEventHandler(testMqttHandler, nullptr, MQTT_EVENT_DATA, &dataEvent);
-    TEST_ASSERT_TRUE(true);
+    TEST_ASSERT_TRUE(testMqttHandler->isConnected());
+}
+
+void test_mqtt_events_and_commands(void)
+{
+    char cmdTopic[] = "ultraheat/command";
+    char checkData[] = "check_update";
+    esp_mqtt_event_t checkEvent = {};
+    checkEvent.event_id = MQTT_EVENT_DATA;
+    checkEvent.topic = cmdTopic;
+    checkEvent.topic_len = sizeof(cmdTopic) - 1;
+    checkEvent.data = checkData;
+    checkEvent.data_len = sizeof(checkData) - 1;
+    MqttHandler::mqttEventHandler(testMqttHandler, nullptr, MQTT_EVENT_DATA, &checkEvent);
+
+    char installTopic[] = "ultraheat/update/install";
+    char installData[] = "install";
+    esp_mqtt_event_t installEvent = {};
+    installEvent.event_id = MQTT_EVENT_DATA;
+    installEvent.topic = installTopic;
+    installEvent.topic_len = sizeof(installTopic) - 1;
+    installEvent.data = installData;
+    installEvent.data_len = sizeof(installData) - 1;
+    MqttHandler::mqttEventHandler(testMqttHandler, nullptr, MQTT_EVENT_DATA, &installEvent);
+
+    esp_mqtt_event_t errEvent = {};
+    errEvent.event_id = MQTT_EVENT_ERROR;
+    MqttHandler::mqttEventHandler(testMqttHandler, nullptr, MQTT_EVENT_ERROR, &errEvent);
+
+    esp_mqtt_event_t pubEvent = {};
+    pubEvent.event_id = MQTT_EVENT_PUBLISHED;
+    MqttHandler::mqttEventHandler(testMqttHandler, nullptr, MQTT_EVENT_PUBLISHED, &pubEvent);
+
+    esp_mqtt_event_t discEvent = {};
+    discEvent.event_id = MQTT_EVENT_DISCONNECTED;
+    MqttHandler::mqttEventHandler(testMqttHandler, nullptr, MQTT_EVENT_DISCONNECTED, &discEvent);
+    TEST_ASSERT_FALSE(testMqttHandler->isConnected());
+}
+
+void test_send_update_state_and_empty_state(void)
+{
+    g_publishedMqttMessages.clear();
+
+    // Empty sensor data should not publish
+    testMqttHandler->sendState();
+    TEST_ASSERT_EQUAL_INT(0, g_publishedMqttMessages.size());
+
+    // Trigger via global hook with data
+    cJSON_AddNumberToObject(meterT550.getJsonData(), "6.8", 1.5);
+    triggerMqttPublish();
+    TEST_ASSERT_EQUAL_INT(1, g_publishedMqttMessages.size());
+
+    // Publish firmware update state
+    g_publishedMqttMessages.clear();
+    testMqttHandler->sendUpdateState("v1.2.0", "https://github.com/example/release", "Release v1.2.0");
+    TEST_ASSERT_EQUAL_INT(1, g_publishedMqttMessages.size());
+    TEST_ASSERT_EQUAL_STRING("ultraheat/update/state", g_publishedMqttMessages[0].topic.c_str());
+
+    cJSON *doc = cJSON_Parse(g_publishedMqttMessages[0].data.c_str());
+    TEST_ASSERT_NOT_NULL(doc);
+    TEST_ASSERT_EQUAL_STRING("v1.2.0", cJSON_GetObjectItem(doc, "latest_version")->valuestring);
+    cJSON_Delete(doc);
+}
+
+void test_setup_with_credentials_and_empty_broker(void)
+{
+    configManager.m_mqttUser = "user";
+    configManager.m_mqttPassword = "password";
+    MqttHandler authHandler;
+    authHandler.setup();
+
+    configManager.m_mqttServer = "";
+    MqttHandler emptyHandler;
+    emptyHandler.setup();
+    TEST_ASSERT_FALSE(emptyHandler.isConnected());
 }
 
 int main(int argc, char **argv)
@@ -258,5 +332,8 @@ int main(int argc, char **argv)
     RUN_TEST(test_ha_button_discovery);
     RUN_TEST(test_send_state_publishes_json_and_clears_data);
     RUN_TEST(test_incoming_read_command_handling);
+    RUN_TEST(test_mqtt_events_and_commands);
+    RUN_TEST(test_send_update_state_and_empty_state);
+    RUN_TEST(test_setup_with_credentials_and_empty_broker);
     return UNITY_END();
 }

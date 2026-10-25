@@ -11,6 +11,9 @@ static ConfigManager *testConfig = nullptr;
 
 void setUp(void)
 {
+    resetMockNvs();
+    g_mockNvsInitFirstResult = ESP_OK;
+    g_mockNvsEraseCount = 0;
     testConfig = new ConfigManager();
 }
 
@@ -53,20 +56,52 @@ void test_save_and_load_flow(void)
     testConfig->m_readIntervalSeconds = 600;
     testConfig->m_dummyMode = true;
     testConfig->m_githubRepo = "custom/repo";
+    testConfig->m_githubAutoCheck = true;
+    testConfig->m_githubAutoUpdate = true;
+    testConfig->m_githubIncludePrerelease = true;
+    testConfig->m_githubIncludeNightly = true;
 
-    // Call saveConfig - should execute cleanly via NVS mock
     testConfig->saveConfig();
 
-    TEST_ASSERT_EQUAL_STRING("TestHomeSSID", testConfig->m_wifiSsid.c_str());
-    TEST_ASSERT_EQUAL_STRING("SecretPassword", testConfig->m_wifiPassword.c_str());
-    TEST_ASSERT_EQUAL_STRING("10.0.0.5", testConfig->m_mqttServer.c_str());
-    TEST_ASSERT_EQUAL_UINT16(1884, testConfig->m_mqttPort);
-    TEST_ASSERT_EQUAL_STRING("mqttuser", testConfig->m_mqttUser.c_str());
-    TEST_ASSERT_EQUAL_STRING("mqttpass", testConfig->m_mqttPassword.c_str());
-    TEST_ASSERT_EQUAL_STRING("custom/heatmeter", testConfig->m_mqttTopic.c_str());
-    TEST_ASSERT_EQUAL_UINT32(600, testConfig->m_readIntervalSeconds);
-    TEST_ASSERT_TRUE(testConfig->m_dummyMode);
-    TEST_ASSERT_EQUAL_STRING("custom/repo", testConfig->m_githubRepo.c_str());
+    ConfigManager loadedConfig;
+    loadedConfig.setup();
+
+    TEST_ASSERT_EQUAL_STRING("TestHomeSSID", loadedConfig.m_wifiSsid.c_str());
+    TEST_ASSERT_EQUAL_STRING("SecretPassword", loadedConfig.m_wifiPassword.c_str());
+    TEST_ASSERT_EQUAL_STRING("10.0.0.5", loadedConfig.m_mqttServer.c_str());
+    TEST_ASSERT_EQUAL_UINT16(1884, loadedConfig.m_mqttPort);
+    TEST_ASSERT_EQUAL_STRING("mqttuser", loadedConfig.m_mqttUser.c_str());
+    TEST_ASSERT_EQUAL_STRING("mqttpass", loadedConfig.m_mqttPassword.c_str());
+    TEST_ASSERT_EQUAL_STRING("custom/heatmeter", loadedConfig.m_mqttTopic.c_str());
+    TEST_ASSERT_EQUAL_UINT32(600, loadedConfig.m_readIntervalSeconds);
+    TEST_ASSERT_TRUE(loadedConfig.m_dummyMode);
+    TEST_ASSERT_EQUAL_STRING("custom/repo", loadedConfig.m_githubRepo.c_str());
+    TEST_ASSERT_TRUE(loadedConfig.m_githubAutoCheck);
+    TEST_ASSERT_TRUE(loadedConfig.m_githubAutoUpdate);
+    TEST_ASSERT_TRUE(loadedConfig.m_githubIncludePrerelease);
+    TEST_ASSERT_TRUE(loadedConfig.m_githubIncludeNightly);
+}
+
+void test_setup_erases_nvs_when_no_free_pages(void)
+{
+    g_mockNvsInitFirstResult = ESP_ERR_NVS_NO_FREE_PAGES;
+    g_mockNvsOpenResult = ESP_FAIL;
+
+    testConfig->setup();
+
+    TEST_ASSERT_EQUAL_INT(1, g_mockNvsEraseCount);
+}
+
+void test_save_config_error_paths(void)
+{
+    g_mockNvsOpenResult = ESP_FAIL;
+    testConfig->saveConfig();
+
+    g_mockNvsOpenResult = ESP_OK;
+    g_mockNvsCommitResult = ESP_FAIL;
+    testConfig->saveConfig();
+
+    TEST_ASSERT_EQUAL_STRING("192.168.1.10", testConfig->m_mqttServer.c_str());
 }
 
 int main(int argc, char **argv)
@@ -77,5 +112,7 @@ int main(int argc, char **argv)
     UNITY_BEGIN();
     RUN_TEST(test_default_values);
     RUN_TEST(test_save_and_load_flow);
+    RUN_TEST(test_setup_erases_nvs_when_no_free_pages);
+    RUN_TEST(test_save_config_error_paths);
     return UNITY_END();
 }

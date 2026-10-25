@@ -34,6 +34,11 @@ void test_default_values(void)
     TEST_ASSERT_EQUAL_STRING("ultraheat/state", testConfig->m_mqttTopic.c_str());
     TEST_ASSERT_EQUAL_UINT32(3600, testConfig->m_readIntervalSeconds);
     TEST_ASSERT_FALSE(testConfig->m_dummyMode);
+    TEST_ASSERT_EQUAL_STRING("VertoMomentum/ESP32_HeatMeterGateway", testConfig->m_githubRepo.c_str());
+    TEST_ASSERT_FALSE(testConfig->m_githubAutoCheck);
+    TEST_ASSERT_FALSE(testConfig->m_githubAutoUpdate);
+    TEST_ASSERT_FALSE(testConfig->m_githubIncludePrerelease);
+    TEST_ASSERT_FALSE(testConfig->m_githubIncludeNightly);
 }
 
 void test_save_and_load_flow(void)
@@ -47,6 +52,7 @@ void test_save_and_load_flow(void)
     testConfig->m_mqttTopic = "custom/heatmeter";
     testConfig->m_readIntervalSeconds = 600;
     testConfig->m_dummyMode = true;
+    testConfig->m_githubRepo = "custom/repo";
 
     // Call saveConfig - should execute cleanly via NVS mock
     testConfig->saveConfig();
@@ -60,6 +66,7 @@ void test_save_and_load_flow(void)
     TEST_ASSERT_EQUAL_STRING("custom/heatmeter", testConfig->m_mqttTopic.c_str());
     TEST_ASSERT_EQUAL_UINT32(600, testConfig->m_readIntervalSeconds);
     TEST_ASSERT_TRUE(testConfig->m_dummyMode);
+    TEST_ASSERT_EQUAL_STRING("custom/repo", testConfig->m_githubRepo.c_str());
 }
 
 int main(int argc, char **argv)

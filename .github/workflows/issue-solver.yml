@@ -29,16 +29,23 @@ jobs:
     timeout-minutes: 45
 
     steps:
+      - name: Generate GitHub App Token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Fetch issue details & prepare branch
         id: issue
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           EVENT_ISSUE_NUMBER: ${{ github.event.issue.number }}
           INPUT_ISSUE_NUMBER: ${{ inputs.issue_number }}
         run: |
@@ -60,8 +67,8 @@ jobs:
             echo "EOF_BODY"
           } >> "$GITHUB_OUTPUT"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "vertomomentum-ai-worker[bot]"
+          git config user.email "347802039+vertomomentum-ai-worker[bot]@users.noreply.github.com"
           git checkout -B "$BRANCH_NAME"
 
           gh issue comment "$ISSUE_NUM" --body "🤖 **AI Issue Solver started!**
@@ -122,7 +129,7 @@ jobs:
 
       - name: Commit changes, push branch & create Pull Request
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           ISSUE_NUM: ${{ steps.issue.outputs.issue_number }}
           ISSUE_TITLE: ${{ steps.issue.outputs.issue_title }}
           BRANCH_NAME: ${{ steps.issue.outputs.branch_name }}
@@ -149,14 +156,7 @@ jobs:
           EOF
           )
 
-          # Create PR using GITHUB_TOKEN, falling back to the runner host gh authentication
-          # if organization settings restrict GitHub Actions from creating pull requests
           PR_URL=$(gh pr create \
-            --title "fix: ${ISSUE_TITLE} (#${ISSUE_NUM})" \
-            --body "$PR_BODY" \
-            --assignee "nickelbert" \
-            --head "$BRANCH_NAME" \
-            --base "main" || env -u GH_TOKEN gh pr create \
             --title "fix: ${ISSUE_TITLE} (#${ISSUE_NUM})" \
             --body "$PR_BODY" \
             --assignee "nickelbert" \

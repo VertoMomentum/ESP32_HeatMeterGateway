@@ -2,6 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Status: Work in Progress](https://img.shields.io/badge/Status-Work%20in%20Progress-orange.svg)]()
+[![Code Coverage](docs/coverage.svg)](docs/coverage.svg)
 
 > [!WARNING]
 > **Work in Progress (WIP):** This project is currently under active development. Features, configuration options, and interfaces may change at any time. Testing and feedback are welcome, but use at your own risk.
@@ -168,6 +169,20 @@ telnet <ESP-IP> 23
 - **Simulate OBIS input:** Send raw lines like `6.8(0012.345*MWh)` or `9.4(052.1&037.4*C)` to test parsing.
 - **Trigger publish:** Send `send` to publish current JSON to MQTT.
 - **OTA Ready:** Send `update` to confirm update readiness.
+
+---
+
+## Unit Tests & Code Coverage
+
+Host-based unit tests run in the PlatformIO `native` environment using the Unity test framework and GCC `gcov` instrumentation (no third-party coverage services required):
+
+```bash
+# Run unit tests and automatically update docs/coverage.svg
+pio test -e native -v
+
+# Print detailed per-file coverage report and regenerate badge
+python3 scripts/generate_coverage.py
+```
 
 ---
 

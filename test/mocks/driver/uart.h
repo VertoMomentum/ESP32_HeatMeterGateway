@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <string>
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
 
@@ -51,6 +52,15 @@ typedef struct
     uart_sclk_t source_clk;
 } uart_config_t;
 
+inline std::string g_mockUartRxBuffer = "";
+inline size_t g_mockUartRxPos = 0;
+
+inline void setMockUartRxData(const std::string &data)
+{
+    g_mockUartRxBuffer = data;
+    g_mockUartRxPos = 0;
+}
+
 inline esp_err_t uart_param_config(uart_port_t uart_num, const uart_config_t *uart_config)
 {
     (void)uart_num;
@@ -89,10 +99,18 @@ inline int uart_write_bytes(uart_port_t uart_num, const void *src, size_t size)
 inline int uart_read_bytes(uart_port_t uart_num, void *buf, uint32_t length, TickType_t ticks_to_wait)
 {
     (void)uart_num;
-    (void)buf;
-    (void)length;
     (void)ticks_to_wait;
-    return 0;
+    if (buf == nullptr || length == 0 || g_mockUartRxPos >= g_mockUartRxBuffer.size())
+    {
+        return 0;
+    }
+    uint8_t *out = static_cast<uint8_t *>(buf);
+    uint32_t count = 0;
+    while (count < length && g_mockUartRxPos < g_mockUartRxBuffer.size())
+    {
+        out[count++] = static_cast<uint8_t>(g_mockUartRxBuffer[g_mockUartRxPos++]);
+    }
+    return static_cast<int>(count);
 }
 
 inline esp_err_t uart_wait_tx_done(uart_port_t uart_num, TickType_t ticks_to_wait)

@@ -4,7 +4,7 @@
 #include <cstdint>
 
 #ifndef DEFAULT_GITHUB_REPO
-#define DEFAULT_GITHUB_REPO "nickelbert/ESP32_HeatMeterGateway"
+#define DEFAULT_GITHUB_REPO "VertoMomentum/ESP32_HeatMeterGateway"
 #endif
 
 class ConfigManager
